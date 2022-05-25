@@ -128,8 +128,8 @@ def findTranslationLK(im1: np.ndarray, im2: np.ndarray) -> np.ndarray:
     min_mse = 1000  # arbitrary
     tran_mat = np.array(0)
     for i in range(uv.shape[0]):  # find the best uv by the minimum mse
-        tx = np.around(uv[i, 0], decimals=3)
-        ty = np.around(uv[i, 1], decimals=3)
+        tx = np.around(uv[i, 0], decimals=2)
+        ty = np.around(uv[i, 1], decimals=2)
         if tx != 0 and ty != 0:
             tmp_t = np.array([[1, 0, tx],
                               [0, 1, ty],
@@ -184,7 +184,11 @@ def findRigidLK(im1: np.ndarray, im2: np.ndarray) -> np.ndarray:
     return ans
 
 
-# !!!!! very important: this function find the optimum solution but with 45 min of running !!
+""""findTranslationCorr function find the optimum solution but with 45 min of running- 
+# so we need to resize the image at least to shape (140,140)
+"""
+
+
 def findTranslationCorr(im1: np.ndarray, im2: np.ndarray) -> np.ndarray:
     """
     :param im1: input image 1 in grayscale format.
@@ -223,6 +227,8 @@ def opticalFlowCrossCorr(im1: np.ndarray, im2: np.ndarray, step_size, win_size):
     for y in range(half, im1.shape[0] - half - 1, step_size):
         for x in range(half, im1.shape[1] - half - 1, step_size):
             window = im1[y - half: y + half + 1, x - half: x + half + 1]
+            if cv2.countNonZero(window) == 0:
+                continue
             top_correlation = Best_Corr(window)
             uv[y - half, x -
                half] = np.flip(top_correlation - np.array([y, x]))
@@ -230,7 +236,11 @@ def opticalFlowCrossCorr(im1: np.ndarray, im2: np.ndarray, step_size, win_size):
     return uv
 
 
-# !!!!! very important: this function find the optimum solution but with 45 min of running !!
+""""findRigidCorr function find the optimum solution but with 45 min of running- 
+# so we need to resize the image at least to shape (140,140)
+"""
+
+
 def findRigidCorr(im1: np.ndarray, im2: np.ndarray) -> np.ndarray:
     """
     :param im1: input image 1 in grayscale format.
@@ -238,12 +248,14 @@ def findRigidCorr(im1: np.ndarray, im2: np.ndarray) -> np.ndarray:
     :return: Rigid matrix by correlation.
     """
     t = findTheta(im1, im2)
-    rigid_mat = np.array([[math.cos(t), math.sin(t), 0],
-                          [-math.sin(t), math.cos(t), 0],
+    rigid_mat = np.array([[math.cos(t), -math.sin(t), 0],
+                          [math.sin(t), math.cos(t), 0],
                           [0, 0, 1]], dtype=np.float64)
-    # take the Reverse matrix of rigid_mat and warp with it - then we get only translation without rigid
-    revers_img = cv2.warpPerspective(im2, rigid_mat, im2.shape[::-1])
-    tran_mat = findTranslationCorr(im1, revers_img)
+    # reverse im1 with the rigid we found
+    revers_img = cv2.warpPerspective(im1, rigid_mat, im2.shape[::-1])
+
+    # after we turn the image back, find the translation with corralation only
+    tran_mat = findTranslationCorr(im2, revers_img)
     tx = tran_mat[0, 2]
     ty = tran_mat[1, 2]
     ans = np.array([[math.cos(t), -math.sin(t), tx],
@@ -265,18 +277,38 @@ def warpImages(im1: np.ndarray, im2: np.ndarray, T: np.ndarray) -> np.ndarray:
     if im1.ndim > 2:  # this is RGB image
         im1 = cv2.cvtColor(im1, cv2.COLOR_BGR2GRAY)
         im2 = cv2.cvtColor(im2, cv2.COLOR_BGR2GRAY)
-    new_img = np.zeros(im2.shape)
+    h, w = im1.shape
+    new_img = np.zeros((h, w))
     T_inv = np.linalg.inv(T)
     for i in range(im2.shape[0]):
         for j in range(im2.shape[1]):
             new_index = np.array([i, j, 1])
-            newarr = T_inv @ new_index
-            x = newarr[0].astype(int)
-            y = newarr[1].astype(int)
-            if 0 <= x < im1.shape[0] and 0 <= y < im1.shape[1]:
-                new_img[i, j] = im1[x, y]
+            newarr = T_inv.dot(new_index)
+            x = newarr[0].astype(float)
+            y = newarr[1].astype(float)
+            x_ceil = int(math.ceil(x))
+            y_ceil = int(math.ceil(y))
+            x_floor = int(math.floor(x))
+            y_floor = int(math.floor(y))
+            a = np.round(x % 1, 3)
+            b = np.round(y % 1, 3)
+            intance = 0
+            if x_floor < h and y_ceil < w and x_floor >= 0 and y_ceil >= 0:
+                intance += (1 - a) * (1 - b) * im1[x_floor, y_ceil]
+            if x_ceil < h and y_floor < w and x_ceil >= 0 and y_floor >= 0:
+                intance += a * (1 - b) * im1[x_ceil, y_floor]
+            if x_ceil < h and y_ceil < w and x_ceil >= 0 and y_ceil >= 0:
+                intance += a * b * im1[x_ceil, y_ceil]
+            if x_floor < h and y_ceil < w and x_floor >= 0 and y_ceil >= 0:
+                intance += (1 - a) * b * im1[x_floor, y_ceil]
+            new_img[i, j] = intance
 
-    plt.imshow(new_img)
+    f, ax = plt.subplots(2)
+    plt.gray()
+    ax[0].imshow(im1)
+    ax[0].set_title('im 1 before warping')
+    ax[1].imshow(new_img)
+    ax[1].set_title('after my warping')
     plt.show()
     return new_img
 
